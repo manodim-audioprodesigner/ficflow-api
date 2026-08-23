@@ -57,6 +57,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({ ok: false, msg: 'Erro interno do servidor.' });
 });
 
-app.listen(PORT, () => {
+import { initDb } from './db.js';
+
+app.listen(PORT, async () => {
   console.log(`[FIC FLOW API] rodando na porta ${PORT}`);
+  await initDb();
 });
