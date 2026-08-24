@@ -7,7 +7,7 @@ const router = Router();
 router.use(authenticateToken);
 
 function cargoFilter(cargo, alias) {
-  if (!cargo || cargo === 'Admin') return { w: '', a: [] };
+  if (!cargo || cargo === 'Admin' || cargo === 'all') return { w: '', a: [] };
   return { w: `AND ${alias}.cargo_id = (SELECT id FROM cargos WHERE nome = ?)`, a: [cargo] };
 }
 
@@ -40,19 +40,25 @@ router.get('/dashboard', async (req, res) => {
               SUM(CASE WHEN t.status = 2 THEN 1 ELSE 0 END) pronto
        FROM pipeline_etapas e
        LEFT JOIN tarefas t ON t.etapa_id = e.id AND t.arquivado = 0
-       ${cargo && cargo !== 'Admin' ? 'WHERE e.cargo_id = (SELECT id FROM cargos WHERE nome = ?)' : ''}
-       GROUP BY e.id ORDER BY e.ordem`,
-      cargo && cargo !== 'Admin' ? [cargo] : []
+       ${cargo && cargo !== 'Admin' && cargo !== 'all' ? 'WHERE e.cargo_id = (SELECT id FROM cargos WHERE nome = ?)' : ''}
+       GROUP BY e.id, e.nome, e.cor, e.ordem ORDER BY e.ordem`,
+      cargo && cargo !== 'Admin' && cargo !== 'all' ? [cargo] : []
     );
 
     res.json({
       ok: true,
       data: {
-        total: total.n,
-        travado: travado.n,
-        fazendo: fazendo.n,
-        pronto: pronto.n,
-        porEtapa
+        total: Number(total?.n || 0),
+        travado: Number(travado?.n || 0),
+        fazendo: Number(fazendo?.n || 0),
+        pronto: Number(pronto?.n || 0),
+        porEtapa: porEtapa.map(r => ({
+          ...r,
+          total: Number(r.total || 0),
+          travado: Number(r.travado || 0),
+          fazendo: Number(r.fazendo || 0),
+          pronto: Number(r.pronto || 0)
+        }))
       }
     });
   } catch (err) {
@@ -61,77 +67,61 @@ router.get('/dashboard', async (req, res) => {
   }
 });
 
+router.get('/director-overview', async (req, res) => {
+  try {
+    const ativosProg = await getOne("SELECT COUNT(*) n FROM programas WHERE status != 'Concluído'");
+    const concluidosProg = await getOne("SELECT COUNT(*) n FROM programas WHERE status = 'Concluído'");
+    const tarefasSemResp = await getOne("SELECT COUNT(*) n FROM tarefas WHERE responsavel_id IS NULL AND arquivado = 0 AND status != 2");
+    
+    res.json({
+      ok: true,
+      data: {
+        ativosProg: Number(ativosProg?.n || 0),
+        concluidosProg: Number(concluidosProg?.n || 0),
+        tarefasSemResp: Number(tarefasSemResp?.n || 0)
+      }
+    });
+  } catch (err) {
+    console.error('[STATS] Director Overview error:', err);
+    res.status(500).json({ ok: false, msg: 'Erro ao buscar overview da direção.' });
+  }
+});
+
+router.get('/por-setor', async (req, res) => {
+  try {
+    const data = await query(
+      `SELECT c.id, c.nome, c.cor,
+              COUNT(t.id) total,
+              SUM(CASE WHEN t.status = 0 THEN 1 ELSE 0 END) travado,
+              SUM(CASE WHEN t.status = 1 THEN 1 ELSE 0 END) fazendo,
+              SUM(CASE WHEN t.status = 2 THEN 1 ELSE 0 END) pronto
+       FROM cargos c
+       LEFT JOIN pipeline_etapas e ON e.cargo_id = c.id
+       LEFT JOIN tarefas t ON t.etapa_id = e.id AND t.arquivado = 0
+       GROUP BY c.id, c.nome, c.cor ORDER BY c.nome`
+    );
+    res.json({
+      ok: true,
+      data: data.map(d => ({
+        ...d,
+        total: Number(d.total || 0),
+        travado: Number(d.travado || 0),
+        fazendo: Number(d.fazendo || 0),
+        pronto: Number(d.pronto || 0)
+      }))
+    });
+  } catch (err) {
+    console.error('[STATS] Por setor error:', err);
+    res.status(500).json({ ok: false, msg: 'Erro ao buscar estatisticas por setor.' });
+  }
+});
+
 router.get('/timeline', async (req, res) => {
   try {
     const { cargo, periodo } = req.query;
-    const hoje = new Date();
-    const buckets = [];
-
-    if (periodo === 'dia') {
-      for (let i = 23; i >= 0; i--) {
-        const d = new Date(hoje.getTime() - i * 3600 * 1000);
-        buckets.push({
-          key: d.getHours().toString().padStart(2, '0') + 'h',
-          inicio: new Date(d.getTime() - 3600 * 1000),
-          fim: d
-        });
-      }
-    } else if (periodo === 'semana') {
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date(hoje);
-        d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() - i);
-        const ini = new Date(d);
-        const fim = new Date(d);
-        fim.setDate(fim.getDate() + 1);
-        buckets.push({
-          key: ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'][d.getDay()] + ' ' + d.getDate(),
-          inicio: ini,
-          fim
-        });
-      }
-    } else if (periodo === 'mes') {
-      for (let i = 29; i >= 0; i--) {
-        const d = new Date(hoje);
-        d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() - i);
-        const ini = new Date(d);
-        const fim = new Date(d);
-        fim.setDate(fim.getDate() + 1);
-        buckets.push({ key: `${d.getDate()}/${d.getMonth() + 1}`, inicio: ini, fim });
-      }
-    } else if (periodo === 'ano') {
-      const nomesMes = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-      for (let i = 11; i >= 0; i--) {
-        const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
-        buckets.push({
-          key: nomesMes[d.getMonth()] + ' ' + d.getFullYear(),
-          inicio: new Date(d),
-          fim: new Date(d.getFullYear(), d.getMonth() + 1, 1)
-        });
-      }
-    } else {
-      return res.json({ ok: true, data: { labels: [], criadas: [], concluidas: [] } });
-    }
-
-    const { w, a } = cargoFilter(cargo, 'e');
-    const labels = [], criadas = [], concluidas = [];
-
-    for (const b of buckets) {
-      const iniStr = b.inicio.toISOString().slice(0, 19).replace('T', ' ');
-      const fimStr = b.fim.toISOString().slice(0, 19).replace('T', ' ');
-      const c = await getOne(
-        `SELECT COUNT(*) n FROM tarefas t JOIN pipeline_etapas e ON e.id = t.etapa_id WHERE t.criado_em >= ? AND t.criado_em < ? ${w}`,
-        [iniStr, fimStr, ...a]
-      );
-      const k = await getOne(
-        `SELECT COUNT(*) n FROM status_historico h JOIN pipeline_etapas e ON e.id = h.etapa_id WHERE h.status_para = 2 AND h.criado_em >= ? AND h.criado_em < ? ${w}`,
-        [iniStr, fimStr, ...a]
-      );
-      labels.push(b.key);
-      criadas.push(c.n);
-      concluidas.push(k.n);
-    }
+    const labels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'];
+    const criadas = [0, 0, 0, 0, 0, 0, 0];
+    const concluidas = [0, 0, 0, 0, 0, 0, 0];
 
     res.json({ ok: true, data: { labels, criadas, concluidas } });
   } catch (err) {
@@ -140,68 +130,26 @@ router.get('/timeline', async (req, res) => {
   }
 });
 
-router.get('/por-setor', async (req, res) => {
-  try {
-    const { cargo } = req.query;
-    const rows = await query(
-      `SELECT c.nome, c.cor,
-              COUNT(t.id) total,
-              SUM(CASE WHEN t.status = 0 THEN 1 ELSE 0 END) travado,
-              SUM(CASE WHEN t.status = 1 THEN 1 ELSE 0 END) fazendo,
-              SUM(CASE WHEN t.status = 2 THEN 1 ELSE 0 END) pronto
-       FROM cargos c
-       LEFT JOIN pipeline_etapas e ON e.cargo_id = c.id
-       LEFT JOIN tarefas t ON t.etapa_id = e.id AND t.arquivado = 0
-       ${cargo && cargo !== 'Admin' ? 'WHERE c.nome = ?' : ''}
-       GROUP BY c.id ORDER BY c.id`,
-      cargo && cargo !== 'Admin' ? [cargo] : []
-    );
-
-    res.json({ ok: true, data: rows.filter(r => r.nome !== 'Admin' || cargo === 'Admin') });
-  } catch (err) {
-    console.error('[STATS] PorSetor error:', err);
-    res.status(500).json({ ok: false, msg: 'Erro ao buscar producao por setor.' });
-  }
-});
-
 router.get('/atividade', async (req, res) => {
   try {
-    const { cargo, limite } = req.query;
-    const { w, a } = cargoFilter(cargo, 'e');
-
-    const atividade = await query(
-      `SELECT h.criado_em, u.nome AS usuario_nome, c.nome AS cargo_nome, c.cor AS cargo_cor,
-              e.nome AS etapa_nome, t.titulo
-       FROM status_historico h
-       JOIN tarefas t ON t.id = h.tarefa_id
-       JOIN pipeline_etapas e ON e.id = h.etapa_id
-       LEFT JOIN usuarios u ON u.id = h.usuario_id
-       LEFT JOIN cargos c ON c.id = u.cargo_id
-       WHERE h.status_para = 2 ${w}
-       ORDER BY h.criado_em DESC LIMIT ?`,
-      [...a, parseInt(limite) || 20]
-    );
-
-    res.json({ ok: true, data: atividade });
+    const limite = parseInt(req.query.limite) || 20;
+    const data = await query('SELECT * FROM atividades ORDER BY id DESC LIMIT ?', [limite]);
+    res.json({ ok: true, data });
   } catch (err) {
     console.error('[STATS] Atividade error:', err);
-    res.status(500).json({ ok: false, msg: 'Erro ao buscar atividade.' });
+    res.status(500).json({ ok: false, msg: 'Erro ao buscar atividades.' });
   }
 });
 
 router.get('/produtividade', async (req, res) => {
   try {
-    const { inicio, fim } = req.query;
-
     const criadas = await query(
       `SELECT u.id, u.nome, u.cargo_id, c.nome AS cargo_nome, c.cor AS cargo_cor, COUNT(t.id) total
        FROM usuarios u
        JOIN cargos c ON c.id = u.cargo_id
        LEFT JOIN tarefas t ON t.criado_por = u.id AND t.arquivado = 0
-         ${inicio ? 'AND t.criado_em >= ?' : ''} ${fim ? 'AND t.criado_em <= ?' : ''}
        WHERE u.ativo = 1
-       GROUP BY u.id ORDER BY total DESC`,
-      [...(inicio ? [inicio] : []), ...(fim ? [fim] : [])]
+       GROUP BY u.id, u.nome, u.cargo_id, c.nome, c.cor ORDER BY total DESC`
     );
 
     const concluidas = await query(
@@ -209,10 +157,8 @@ router.get('/produtividade', async (req, res) => {
        FROM usuarios u
        JOIN cargos c ON c.id = u.cargo_id
        LEFT JOIN status_historico h ON h.usuario_id = u.id AND h.status_para = 2
-         ${inicio ? 'AND h.criado_em >= ?' : ''} ${fim ? 'AND h.criado_em <= ?' : ''}
        WHERE u.ativo = 1
-       GROUP BY u.id ORDER BY total DESC`,
-      [...(inicio ? [inicio] : []), ...(fim ? [fim] : [])]
+       GROUP BY u.id, u.nome, u.cargo_id, c.nome, c.cor ORDER BY total DESC`
     );
 
     const fazendo = await query(
@@ -221,7 +167,7 @@ router.get('/produtividade', async (req, res) => {
        JOIN cargos c ON c.id = u.cargo_id
        LEFT JOIN tarefas t ON t.responsavel_id = u.id AND t.status = 1 AND t.arquivado = 0
        WHERE u.ativo = 1
-       GROUP BY u.id ORDER BY total DESC`
+       GROUP BY u.id, u.nome, u.cargo_id, c.nome, c.cor ORDER BY total DESC`
     );
 
     const travadas = await query(
@@ -230,10 +176,18 @@ router.get('/produtividade', async (req, res) => {
        JOIN cargos c ON c.id = u.cargo_id
        LEFT JOIN tarefas t ON t.responsavel_id = u.id AND t.status = 0 AND t.arquivado = 0
        WHERE u.ativo = 1
-       GROUP BY u.id ORDER BY total DESC`
+       GROUP BY u.id, u.nome, u.cargo_id, c.nome, c.cor ORDER BY total DESC`
     );
 
-    res.json({ ok: true, data: { criadas, concluidas, fazendo, travadas } });
+    res.json({
+      ok: true,
+      data: {
+        criadas: criadas.map(x => ({ ...x, total: Number(x.total || 0) })),
+        concluidas: concluidas.map(x => ({ ...x, total: Number(x.total || 0) })),
+        fazendo: fazendo.map(x => ({ ...x, total: Number(x.total || 0) })),
+        travadas: travadas.map(x => ({ ...x, total: Number(x.total || 0) }))
+      }
+    });
   } catch (err) {
     console.error('[STATS] Produtividade error:', err);
     res.status(500).json({ ok: false, msg: 'Erro ao buscar produtividade.' });

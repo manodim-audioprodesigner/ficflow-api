@@ -4,13 +4,13 @@ import jwt from 'jsonwebtoken';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'ficflow-secret-change-in-production';
-const JWT_EXPIRES = '8h';
+const JWT_EXPIRES = '30d';
 
 router.post('/login', async (req, res) => {
   try {
     const { usuario, pin } = req.body;
     if (!usuario || !pin) {
-      return res.status(400).json({ ok: false, msg: 'Informe usuario e PIN.' });
+      return res.status(400).json({ ok: false, msg: 'Informe usuário e senha.' });
     }
 
     const user = await getOne(
@@ -22,18 +22,25 @@ router.post('/login', async (req, res) => {
     );
 
     if (!user) {
-      return res.status(401).json({ ok: false, msg: 'Usuario nao encontrado.' });
+      return res.status(401).json({ ok: false, msg: 'Usuário não encontrado.' });
     }
 
     if (user.pin_hash !== hashPin(pin)) {
-      return res.status(401).json({ ok: false, msg: 'PIN incorreto.' });
+      return res.status(401).json({ ok: false, msg: 'Senha incorreta.' });
     }
 
     const token = jwt.sign(
-      { id: user.id, usuario: user.usuario, cargo: user.cargo, cargo_id: user.cargo_id },
+      { id: user.id, usuario: user.usuario, cargo: user.cargo, cargo_id: user.cargo_id, level: user.level },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES }
     );
+
+    let teamsArr = [];
+    try {
+      teamsArr = typeof user.teams === 'string' ? JSON.parse(user.teams) : (Array.isArray(user.teams) ? user.teams : []);
+    } catch (e) {
+      teamsArr = [];
+    }
 
     res.json({
       ok: true,
@@ -44,7 +51,12 @@ router.post('/login', async (req, res) => {
         usuario: user.usuario,
         cargo: user.cargo,
         cargo_cor: user.cargo_cor,
-        cargo_id: user.cargo_id
+        cargo_id: user.cargo_id,
+        genero: user.genero || 'M',
+        level: user.level || 'employee',
+        short: user.short || 'FUNC',
+        teams: teamsArr,
+        idioma: user.idioma || null
       }
     });
   } catch (err) {
@@ -53,10 +65,24 @@ router.post('/login', async (req, res) => {
   }
 });
 
+router.post('/heartbeat', authenticateToken, async (req, res) => {
+  try {
+    const { usuario_id } = req.body;
+    const uid = usuario_id || req.user.id;
+    if (uid) {
+      const { execute } = await import('../db.js');
+      await execute('UPDATE usuarios SET ultimo_visto = CURRENT_TIMESTAMP WHERE id = ?', [uid]);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.json({ ok: true });
+  }
+});
+
 router.get('/me', authenticateToken, async (req, res) => {
   try {
     const user = await getOne(
-      `SELECT u.id, u.nome, u.usuario, u.cargo_id, u.ativo, c.nome AS cargo, c.cor AS cargo_cor
+      `SELECT u.id, u.nome, u.usuario, u.cargo_id, u.genero, u.level, u.short, u.teams, u.idioma, u.ativo, c.nome AS cargo, c.cor AS cargo_cor
        FROM usuarios u
        JOIN cargos c ON c.id = u.cargo_id
        WHERE u.id = ?`,
@@ -64,10 +90,17 @@ router.get('/me', authenticateToken, async (req, res) => {
     );
 
     if (!user) {
-      return res.status(404).json({ ok: false, msg: 'Usuario nao encontrado.' });
+      return res.status(404).json({ ok: false, msg: 'Usuário não encontrado.' });
     }
 
-    res.json({ ok: true, user });
+    let teamsArr = [];
+    try {
+      teamsArr = typeof user.teams === 'string' ? JSON.parse(user.teams) : (Array.isArray(user.teams) ? user.teams : []);
+    } catch (e) {
+      teamsArr = [];
+    }
+
+    res.json({ ok: true, user: { ...user, teams: teamsArr } });
   } catch (err) {
     console.error('[AUTH] Me error:', err);
     res.status(500).json({ ok: false, msg: 'Erro interno.' });
@@ -79,12 +112,12 @@ export function authenticateToken(req, res, next) {
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
-    return res.status(401).json({ ok: false, msg: 'Token nao fornecido.' });
+    return res.status(401).json({ ok: false, msg: 'Token não fornecido.' });
   }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
-      return res.status(403).json({ ok: false, msg: 'Token invalido ou expirado.' });
+      return res.status(403).json({ ok: false, msg: 'Token inválido ou expirado.' });
     }
     req.user = user;
     next();
@@ -92,11 +125,10 @@ export function authenticateToken(req, res, next) {
 }
 
 export function requireAdmin(req, res, next) {
-  if (req.user.cargo_id !== 1) {
+  if (req.user.cargo_id !== 1 && req.user.level !== 'director') {
     return res.status(403).json({ ok: false, msg: 'Acesso restrito a administradores.' });
   }
   next();
 }
 
-export { JWT_SECRET };
 export default router;

@@ -111,8 +111,8 @@ export async function initDb() {
           nome VARCHAR(255) NOT NULL,
           codigo VARCHAR(50) NOT NULL,
           root VARCHAR(500) DEFAULT '',
-          prioridade SMALLINT NOT NULL DEFAULT 2,
-          status VARCHAR(50) NOT NULL DEFAULT 'pendente',
+          prioridade VARCHAR(50) NOT NULL DEFAULT 'Normal',
+          status VARCHAR(50) NOT NULL DEFAULT 'Em andamento',
           custom_flow TEXT DEFAULT NULL,
           criado_por INT DEFAULT NULL,
           criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -156,12 +156,12 @@ export async function initDb() {
 
         CREATE TABLE IF NOT EXISTS chat_mensagens (
           id SERIAL PRIMARY KEY,
-          usuario_id INT NOT NULL REFERENCES usuarios(id),
+          usuario_id INT NULL REFERENCES usuarios(id),
           usuario_nome VARCHAR(100) NOT NULL,
           usuario_genero VARCHAR(10) DEFAULT 'M',
           cargo_nome VARCHAR(50) NOT NULL,
           cargo_cor VARCHAR(20) NOT NULL,
-          destinatario_id INT REFERENCES usuarios(id),
+          destinatario_id INT NULL REFERENCES usuarios(id),
           destinatario_nome VARCHAR(100) DEFAULT NULL,
           tipo VARCHAR(20) NOT NULL DEFAULT 'chat',
           texto TEXT NOT NULL,
@@ -218,6 +218,31 @@ export async function initDb() {
         await pgPool.query('INSERT INTO cargos (nome, cor) VALUES ($1, $2) ON CONFLICT (nome) DO UPDATE SET cor=$2', [nome, cor]);
       }
 
+      // Insere as 11 etapas oficiais da Pipeline
+      const etapasOficiais = [
+        ['01_EDITOR_HEYGEN',         'Preparar edição para HeyGen',             1,  'Editor de Video',            120, '#2ec4f1'],
+        ['02_HEYGEN_PT',              'Subir no HeyGen e gerar SRT PT',          2,  'UP Video Heygen',            60,  '#00c2a8'],
+        ['03_PT_CORRIGIDO',           'Correção do português',                   3,  'Correção do SRT Português',  90,  '#2ed573'],
+        ['04_ES_TRADUZIDO',           'Traduzir/corrigir espanhol fora HeyGen',  4,  'Correção do SRT Espanhol',   120, '#ffb020'],
+        ['05_HEYGEN_VOZES',           'Configurar vozes no HeyGen',              5,  'UP Video Heygen',            90,  '#00c2a8'],
+        ['06_HEYGEN_ES_CORRIGIDO',    'Correção do espanhol dentro do HeyGen',   6,  'Correção do SRT Espanhol',   90,  '#ffb020'],
+        ['07_VIDEO_HEYGEN',           'Gerar vídeo/lipsync no HeyGen',           7,  'UP Video Heygen',            60,  '#00c2a8'],
+        ['08_PROJETO_PRE_MIX',        'Preparar projeto para receber a Mix',     8,  'Editor de Video',            60,  '#2ec4f1'],
+        ['09_MIX',                    'Mixar áudio do programa',                 9,  'Mixagem',                    120, '#8b5cf6'],
+        ['10_VIDEO_FINAL',            'Finalizar vídeo com áudio mixado',        10, 'Editor de Video',            90,  '#2ec4f1'],
+        ['11_QC_FINAL_ES',            'Correção final em espanhol',              11, 'Correção Final',             60,  '#10b981']
+      ];
+
+      for (const [codigo, nome, ordem, cargoNome, sla, cor] of etapasOficiais) {
+        const cargoRes = await pgPool.query('SELECT id FROM cargos WHERE nome = $1', [cargoNome]);
+        const cargoId = cargoRes.rows?.[0]?.id || null;
+        await pgPool.query(`
+          INSERT INTO pipeline_etapas (codigo, nome, ordem, cargo_id, sla_minutos, cor)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (codigo) DO UPDATE SET nome=$2, ordem=$3, cargo_id=$4, sla_minutos=$5, cor=$6
+        `, [codigo, nome, ordem, cargoId, sla, cor]);
+      }
+
       // Direção Geral admin
       await pgPool.query(`
         INSERT INTO usuarios (nome, usuario, pin_hash, cargo_id, genero, level, short, teams, ativo) 
@@ -225,7 +250,7 @@ export async function initDb() {
         ON CONFLICT (usuario) DO UPDATE SET nome='Direção Geral', cargo_id=1, level='director', short='DIR', ativo=1;
       `);
 
-      console.log('[DB] Tabelas PostgreSQL e Cargos inicializados com sucesso!');
+      console.log('[DB] Tabelas PostgreSQL, Cargos e Etapas inicializados com sucesso!');
     } catch (e) {
       console.error('[DB] Erro ao inicializar tabelas PostgreSQL:', e.message);
     }
