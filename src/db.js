@@ -49,9 +49,14 @@ export async function query(sql, params = []) {
 export async function execute(sql, params = []) {
   if (isPostgres) {
     let paramIndex = 1;
-    const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+    let pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+    const isInsert = pgSql.trim().toUpperCase().startsWith('INSERT');
+    if (isInsert && !pgSql.toUpperCase().includes('RETURNING')) {
+      pgSql += ' RETURNING id';
+    }
     const res = await pgPool.query(pgSql, params);
-    return { insertId: res.rows?.[0]?.id || res.rowCount, affectedRows: res.rowCount };
+    const generatedId = res.rows?.[0]?.id;
+    return { insertId: generatedId || res.rowCount, id: generatedId, affectedRows: res.rowCount };
   } else {
     const [result] = await mysqlPool.execute(sql, params);
     return result;
@@ -111,7 +116,7 @@ export async function initDb() {
           nome VARCHAR(255) NOT NULL,
           codigo VARCHAR(50) NOT NULL,
           root VARCHAR(500) DEFAULT '',
-          prioridade VARCHAR(50) NOT NULL DEFAULT 'Normal',
+          prioridade SMALLINT NOT NULL DEFAULT 1,
           status VARCHAR(50) NOT NULL DEFAULT 'Em andamento',
           custom_flow TEXT DEFAULT NULL,
           criado_por INT DEFAULT NULL,
