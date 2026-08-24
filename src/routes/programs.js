@@ -95,7 +95,7 @@ router.post('/', async (req, res) => {
     const r = await execute(
       `INSERT INTO programas (nome, codigo, root, prioridade, status, custom_flow, criado_por)
        VALUES (?, ?, ?, ?, 'Em andamento', ?, ?)`,
-      [nome.trim(), code, rootPath, prioridade, flowJson, userId]
+      [nome.trim(), code, rootPath, prioVal, flowJson, userId]
     );
     const progId = r.insertId;
 

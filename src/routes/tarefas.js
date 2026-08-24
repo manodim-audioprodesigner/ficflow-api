@@ -102,6 +102,7 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const { titulo, cliente, idioma, nota, categoria_id, etapa_id, responsavel_id, prioridade, prazo } = req.body;
+    const prioVal = (typeof prioridade === 'number') ? prioridade : (prioridade === 'Alta' ? 2 : (prioridade === 'Urgente' ? 3 : 1));
     
     if (!titulo || !etapa_id) {
       return res.status(400).json({ ok: false, msg: 'Titulo e etapa sao obrigatorios.' });
@@ -110,7 +111,7 @@ router.post('/', async (req, res) => {
     const result = await execute(
       `INSERT INTO tarefas (titulo, cliente, idioma, nota, categoria_id, etapa_id, responsavel_id, prioridade, prazo, criado_por)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [titulo, cliente || null, idioma || null, nota || null, categoria_id || null, etapa_id, responsavel_id || null, prioridade || 2, prazo || null, req.user.id]
+      [titulo, cliente || null, idioma || null, nota || null, categoria_id || null, etapa_id, responsavel_id || null, prioVal, prazo || null, req.user.id]
     );
 
     await execute(
@@ -130,6 +131,7 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { titulo, cliente, idioma, nota, categoria_id, etapa_id, responsavel_id, prioridade, prazo } = req.body;
+    const prioVal = (typeof prioridade === 'number') ? prioridade : (prioridade === 'Alta' ? 2 : (prioridade === 'Urgente' ? 3 : 1));
 
     const old = await getOne('SELECT * FROM tarefas WHERE id = ?', [id]);
     if (!old) {
@@ -138,7 +140,7 @@ router.put('/:id', async (req, res) => {
 
     await execute(
       `UPDATE tarefas SET titulo=?, cliente=?, idioma=?, nota=?, categoria_id=?, etapa_id=?, responsavel_id=?, prioridade=?, prazo=?, atualizado_em=NOW() WHERE id=?`,
-      [titulo, cliente || null, idioma || null, nota || null, categoria_id || null, etapa_id, responsavel_id || null, prioridade || 2, prazo || null, id]
+      [titulo, cliente || null, idioma || null, nota || null, categoria_id || null, etapa_id, responsavel_id || null, prioVal, prazo || null, id]
     );
 
     const mudancas = [];
