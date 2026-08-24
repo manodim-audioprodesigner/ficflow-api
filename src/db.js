@@ -189,14 +189,43 @@ export async function initDb() {
           detalhes TEXT NULL,
           criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+      `);
 
-        INSERT INTO cargos (id, nome, cor) VALUES (1, 'Direção Geral', '#7c5cff') ON CONFLICT (id) DO NOTHING;
+      // Insere todos os cargos padrão
+      const standardCargos = [
+        ['Direção Geral',              '#7c5cff'],
+        ['Gestores',                   '#9b7bff'],
+        ['Editor de Video',            '#2ec4f1'],
+        ['Operador de Audio',          '#ff5c8a'],
+        ['Gravação',                   '#ff4757'],
+        ['Sincronismo do Áudio',       '#3ddc84'],
+        ['UP Video Heygen',            '#00c2a8'],
+        ['Correção do SRT Português',  '#2ed573'],
+        ['Correção do SRT Espanhol',   '#ffb020'],
+        ['Correção do SRT Inglês',     '#38bdf8'],
+        ['Correção do SRT Arabe',      '#a855f7'],
+        ['Correção do SRT Urdu',       '#e11d48'],
+        ['Correção do SRT Indonésio',  '#059669'],
+        ['Correção do SRT Russo',      '#d97706'],
+        ['Correção do SRT Frances',    '#0891b2'],
+        ['Mixagem',                    '#8b5cf6'],
+        ['Tradutor',                   '#3b82f6'],
+        ['Correção',                   '#f59e0b'],
+        ['Correção Final',             '#10b981']
+      ];
 
+      for (const [nome, cor] of standardCargos) {
+        await pgPool.query('INSERT INTO cargos (nome, cor) VALUES ($1, $2) ON CONFLICT (nome) DO UPDATE SET cor=$2', [nome, cor]);
+      }
+
+      // Direção Geral admin
+      await pgPool.query(`
         INSERT INTO usuarios (nome, usuario, pin_hash, cargo_id, genero, level, short, teams, ativo) 
         VALUES ('Direção Geral', 'admin', '${hashPin('boss')}', 1, 'M', 'director', 'DIR', '["Direção Geral"]', 1)
-        ON CONFLICT (usuario) DO NOTHING;
+        ON CONFLICT (usuario) DO UPDATE SET nome='Direção Geral', cargo_id=1, level='director', short='DIR', ativo=1;
       `);
-      console.log('[DB] Tabelas PostgreSQL inicializadas com sucesso!');
+
+      console.log('[DB] Tabelas PostgreSQL e Cargos inicializados com sucesso!');
     } catch (e) {
       console.error('[DB] Erro ao inicializar tabelas PostgreSQL:', e.message);
     }

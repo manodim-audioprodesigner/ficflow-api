@@ -13,6 +13,8 @@ import etapasRoutes from './routes/etapas.js';
 import tarefasRoutes from './routes/tarefas.js';
 import statsRoutes from './routes/stats.js';
 import atividadesRoutes from './routes/atividades.js';
+import programsRoutes from './routes/programs.js';
+import chatRoutes from './routes/chat.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -43,6 +45,8 @@ app.use('/api/cargos', cargosRoutes);
 app.use('/api/categorias', categoriasRoutes);
 app.use('/api/etapas', etapasRoutes);
 app.use('/api/tarefas', tarefasRoutes);
+app.use('/api/programs', programsRoutes);
+app.use('/api/chat', chatRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/atividades', atividadesRoutes);
 
