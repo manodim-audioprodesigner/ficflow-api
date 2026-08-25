@@ -141,6 +141,64 @@ router.get('/atividade', async (req, res) => {
   }
 });
 
+router.get('/team-load', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const isDirector = req.user.level === 'director';
+    const user = await getOne('SELECT teams FROM usuarios WHERE id = ?', [userId]);
+    let teams = [];
+    if (user && user.teams) {
+      try {
+        teams = JSON.parse(user.teams);
+      } catch (e) {}
+    }
+
+    let usersQuery = `
+      SELECT u.id, u.nome, u.usuario, u.genero, u.short, u.ativo,
+             c.nome AS cargo_nome, c.cor AS cargo_cor,
+             (SELECT COUNT(*) FROM tarefas t WHERE t.responsavel_id = u.id AND t.arquivado = 0 AND t.status != 2) AS tarefas_abertas,
+             (SELECT t.titulo FROM tarefas t WHERE t.responsavel_id = u.id AND t.arquivado = 0 AND t.status != 2 ORDER BY t.criado_em DESC LIMIT 1) AS tarefa_atual,
+             (SELECT t.criado_em FROM tarefas t WHERE t.responsavel_id = u.id AND t.arquivado = 0 AND t.status != 2 ORDER BY t.criado_em DESC LIMIT 1) AS tarefa_criada_em,
+             (SELECT p.sla_minutos FROM tarefas t JOIN pipeline_etapas p ON p.id = t.etapa_id WHERE t.responsavel_id = u.id AND t.arquivado = 0 AND t.status != 2 ORDER BY t.criado_em DESC LIMIT 1) AS tarefa_sla
+      FROM usuarios u
+      JOIN cargos c ON c.id = u.cargo_id
+      WHERE u.level = 'employee'
+    `;
+    const queryParams = [];
+
+    if (!isDirector) {
+      if (teams.length > 0) {
+        const placeholders = teams.map(() => '?').join(',');
+        usersQuery += ` AND u.id IN (${placeholders})`;
+        queryParams.push(...teams);
+      } else {
+        usersQuery += ` AND 1 = 0`; // No team, return empty
+      }
+    }
+
+    const funcionarios = await query(usersQuery, queryParams);
+
+    let abertas = 0;
+    funcionarios.forEach(f => {
+      abertas += Number(f.tarefas_abertas || 0);
+    });
+
+    res.json({
+      ok: true,
+      data: {
+        funcionariosCount: funcionarios.length,
+        tarefasAbertasCount: abertas,
+        noLimiteCount: 0,
+        atrasadasCount: 0,
+        funcionarios: funcionarios.map(f => ({ ...f, tarefas_abertas: Number(f.tarefas_abertas || 0) }))
+      }
+    });
+  } catch (err) {
+    console.error('[STATS] Team Load error:', err);
+    res.status(500).json({ ok: false, msg: 'Erro ao buscar dados da equipe.' });
+  }
+});
+
 router.get('/produtividade', async (req, res) => {
   try {
     const criadas = await query(
