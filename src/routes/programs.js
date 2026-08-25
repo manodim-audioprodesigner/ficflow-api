@@ -162,16 +162,35 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Atualizar status do programa
+// Atualizar programa (nome, codigo, prioridade, status, root)
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
-    await execute('UPDATE programas SET status=? WHERE id=?', [status, id]);
+    const { nome, codigo, prioridade, status, root } = req.body;
+
+    const cur = await getOne('SELECT * FROM programas WHERE id = ?', [id]);
+    if (!cur) return res.status(404).json({ ok: false, msg: 'Programa não encontrado.' });
+
+    const newNome = nome ? nome.trim() : cur.nome;
+    const newCodigo = codigo ? String(codigo).trim() : cur.codigo;
+    const newStatus = status || cur.status || 'Em andamento';
+    const newRoot = root !== undefined ? root : cur.root;
+    const prioVal = (typeof prioridade === 'number') ? prioridade : (prioridade === 'Alta' ? 2 : (prioridade === 'Urgente' ? 3 : 1));
+
+    await execute(
+      'UPDATE programas SET nome=?, codigo=?, prioridade=?, status=?, root=? WHERE id=?',
+      [newNome, newCodigo, prioVal, newStatus, newRoot, id]
+    );
+
+    // Atualiza nome/código nas tarefas vinculadas se mudou
+    if (newNome !== cur.nome || newCodigo !== cur.codigo) {
+      await execute('UPDATE tarefas SET programa_nome=?, programa_codigo=? WHERE programa_id=?', [newNome, newCodigo, id]);
+    }
+
     res.json({ ok: true });
   } catch (err) {
     console.error('[PROGRAMS] Update error:', err);
-    res.status(500).json({ ok: false, msg: 'Erro ao atualizar programa.' });
+    res.status(500).json({ ok: false, msg: 'Erro ao atualizar programa: ' + err.message });
   }
 });
 
