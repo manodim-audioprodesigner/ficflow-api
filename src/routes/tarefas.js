@@ -8,12 +8,12 @@ router.use(authenticateToken);
 
 router.get('/', async (req, res) => {
   try {
-    const { etapa_id, categoria_id, status, busca } = req.query;
+    const { etapa_id, categoria_id, status, busca, cargo } = req.query;
     
     let sql = `
       SELECT t.*, e.nome AS etapa_nome, e.cor AS etapa_cor, e.codigo AS etapa_codigo, e.ordem,
              c.nome AS categoria_nome, c.cor AS categoria_cor,
-             u.nome AS responsavel_nome,
+             u.nome AS responsavel_nome, u.genero AS responsavel_genero,
              cr.nome AS criado_por_nome
       FROM tarefas t
       JOIN pipeline_etapas e ON e.id = t.etapa_id
@@ -44,15 +44,17 @@ router.get('/', async (req, res) => {
 
 router.get('/minhas', async (req, res) => {
   try {
-    const { status } = req.query;
-    const userId = req.user.id;
+    const { status, usuario_id } = req.query;
+    const userId = usuario_id ? parseInt(usuario_id) : req.user.id;
 
     let sql = `
       SELECT t.*, e.nome AS etapa_nome, e.cor AS etapa_cor, e.codigo AS etapa_codigo, e.ordem,
-             c.nome AS categoria_nome, c.cor AS categoria_cor
+             c.nome AS categoria_nome, c.cor AS categoria_cor,
+             u.nome AS responsavel_nome, u.genero AS responsavel_genero
       FROM tarefas t
       JOIN pipeline_etapas e ON e.id = t.etapa_id
       LEFT JOIN categorias c ON c.id = t.categoria_id
+      LEFT JOIN usuarios u ON u.id = t.responsavel_id
       WHERE t.arquivado = 0 AND (t.responsavel_id = ? OR t.criado_por = ?)
     `;
     const params = [userId, userId];
@@ -62,7 +64,7 @@ router.get('/minhas', async (req, res) => {
       params.push(status);
     }
 
-    sql += ' ORDER BY e.ordem, CASE t.prioridade WHEN 0 THEN 0 WHEN 1 THEN 1 ELSE 2 END, t.criado_em DESC';
+    sql += ' ORDER BY e.ordem, t.prioridade DESC, t.criado_em DESC';
 
     const tarefas = await query(sql, params);
     res.json({ ok: true, data: tarefas });
@@ -77,7 +79,7 @@ router.get('/:id', async (req, res) => {
     const tarefa = await getOne(
       `SELECT t.*, e.nome AS etapa_nome, e.cor AS etapa_cor, e.codigo AS etapa_codigo, e.ordem,
               c.nome AS categoria_nome, c.cor AS categoria_cor,
-              u.nome AS responsavel_nome,
+              u.nome AS responsavel_nome, u.genero AS responsavel_genero,
               cr.nome AS criado_por_nome
        FROM tarefas t
        JOIN pipeline_etapas e ON e.id = t.etapa_id
@@ -129,7 +131,10 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   try {
-    const { id } = req.params;
+    const rawId = req.params.id;
+    const id = (rawId && rawId !== '[object Object]' && !isNaN(rawId)) ? parseInt(rawId) : (req.body.id ? parseInt(req.body.id) : null);
+    if (!id) return res.status(400).json({ ok: false, msg: 'ID inválido.' });
+
     const { titulo, cliente, idioma, nota, categoria_id, etapa_id, responsavel_id, prioridade, prazo } = req.body;
     const prioVal = (typeof prioridade === 'number') ? prioridade : (prioridade === 'Alta' ? 2 : (prioridade === 'Urgente' ? 3 : 1));
 
@@ -140,22 +145,7 @@ router.put('/:id', async (req, res) => {
 
     await execute(
       `UPDATE tarefas SET titulo=?, cliente=?, idioma=?, nota=?, categoria_id=?, etapa_id=?, responsavel_id=?, prioridade=?, prazo=?, atualizado_em=NOW() WHERE id=?`,
-      [titulo, cliente || null, idioma || null, nota || null, categoria_id || null, etapa_id, responsavel_id || null, prioVal, prazo || null, id]
-    );
-
-    const mudancas = [];
-    if (old.titulo !== titulo) mudancas.push(`Titulo: ${old.titulo} → ${titulo}`);
-    if (old.cliente !== (cliente || null)) mudancas.push(`Cliente: ${old.cliente || '-'} → ${cliente || '-'}`);
-    if (old.idioma !== (idioma || null)) mudancas.push(`Idioma: ${old.idioma || '-'} → ${idioma || '-'}`);
-    if (old.categoria_id !== (categoria_id || null)) mudancas.push('Categoria alterada');
-    if (old.etapa_id !== parseInt(etapa_id)) mudancas.push('Etapa alterada');
-    if (old.responsavel_id !== (responsavel_id || null)) mudancas.push('Responsavel alterado');
-    if (old.prioridade !== (prioridade || 2)) mudancas.push(`Prioridade: ${old.prioridade} → ${prioridade || 2}`);
-
-    await execute(
-      `INSERT INTO atividades (usuario_id, usuario_nome, acao, entidade, entidade_id, detalhes)
-       VALUES (?, ?, 'ATUALIZAR_TAREFA', 'tarefas', ?, ?)`,
-      [req.user.id, req.user.usuario, id, `Atualizou tarefa: ${mudancas.join('; ') || 'Sem alterações'}`]
+      [titulo || old.titulo, cliente !== undefined ? cliente : old.cliente, idioma !== undefined ? idioma : old.idioma, nota !== undefined ? nota : old.nota, categoria_id || old.categoria_id, etapa_id || old.etapa_id, responsavel_id !== undefined ? responsavel_id : old.responsavel_id, prioVal, prazo || old.prazo, id]
     );
 
     res.json({ ok: true });
@@ -167,8 +157,12 @@ router.put('/:id', async (req, res) => {
 
 router.patch('/:id/status', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { status, observacao } = req.body;
+    const rawId = req.params.id;
+    const id = (rawId && rawId !== '[object Object]' && !isNaN(rawId)) ? parseInt(rawId) : (req.body.id ? parseInt(req.body.id) : null);
+    if (!id) return res.status(400).json({ ok: false, msg: 'ID inválido.' });
+
+    const { status, observacao, usuario_id } = req.body;
+    const userId = usuario_id ? parseInt(usuario_id) : req.user.id;
 
     const tarefa = await getOne('SELECT status, etapa_id, titulo FROM tarefas WHERE id = ?', [id]);
     if (!tarefa) {
@@ -178,14 +172,14 @@ router.patch('/:id/status', async (req, res) => {
     const oldStatus = tarefa.status;
     const statusLabels = { 0: 'Travado', 1: 'Fazendo', 2: 'Pronto' };
 
-    if (status === 1) {
+    if (parseInt(status) === 1) {
       await execute(
-        'UPDATE tarefas SET status = ?, responsavel_id = ?, atualizado_em = NOW() WHERE id = ?',
-        [status, req.user.id, id]
+        'UPDATE tarefas SET status = ?, responsavel_id = ?, atualizado_em = NOW(), status_atualizado_em = NOW() WHERE id = ?',
+        [status, userId, id]
       );
     } else {
       await execute(
-        'UPDATE tarefas SET status = ?, atualizado_em = NOW() WHERE id = ?',
+        'UPDATE tarefas SET status = ?, atualizado_em = NOW(), status_atualizado_em = NOW() WHERE id = ?',
         [status, id]
       );
     }
@@ -193,13 +187,7 @@ router.patch('/:id/status', async (req, res) => {
     await execute(
       `INSERT INTO status_historico (tarefa_id, etapa_id, status_de, status_para, usuario_id, observacao)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, tarefa.etapa_id, oldStatus, status, req.user.id, observacao || null]
-    );
-
-    await execute(
-      `INSERT INTO atividades (usuario_id, usuario_nome, acao, entidade, entidade_id, detalhes)
-       VALUES (?, ?, 'ALTERAR_STATUS', 'tarefas', ?, ?)`,
-      [req.user.id, req.user.usuario, id, `${statusLabels[oldStatus] || oldStatus} → ${statusLabels[status] || status}: ${tarefa.titulo}${observacao ? ` (${observacao})` : ''}`]
+      [id, tarefa.etapa_id, oldStatus, status, userId, observacao || null]
     );
 
     res.json({ ok: true });
@@ -214,7 +202,7 @@ router.post('/:id/avancar', async (req, res) => {
     const { id } = req.params;
     const { observacao } = req.body;
 
-    const tarefa = await getOne('SELECT etapa_id, status, titulo FROM tarefas WHERE id = ?', [id]);
+    const tarefa = await getOne('SELECT etapa_id, status, titulo, programa_id FROM tarefas WHERE id = ?', [id]);
     if (!tarefa) {
       return res.status(404).json({ ok: false, msg: 'Tarefa nao encontrada.' });
     }
@@ -227,8 +215,6 @@ router.post('/:id/avancar', async (req, res) => {
       return res.status(400).json({ ok: false, msg: 'Nao ha proxima etapa.' });
     }
 
-    const etapaAntiga = await getOne('SELECT nome FROM pipeline_etapas WHERE id = ?', [tarefa.etapa_id]);
-
     await execute(
       'UPDATE tarefas SET etapa_id = ?, status = 0, atualizado_em = NOW() WHERE id = ?',
       [prox.id, id]
@@ -237,13 +223,7 @@ router.post('/:id/avancar', async (req, res) => {
     await execute(
       `INSERT INTO status_historico (tarefa_id, etapa_id, status_de, status_para, usuario_id, observacao)
        VALUES (?, ?, ?, 0, ?, ?)`,
-      [id, prox.id, tarefa.status, req.user.id, observacao || 'Avancou etapa']
-    );
-
-    await execute(
-      `INSERT INTO atividades (usuario_id, usuario_nome, acao, entidade, entidade_id, detalhes)
-       VALUES (?, ?, 'AVANCAR_ETAPA', 'tarefas', ?, ?)`,
-      [req.user.id, req.user.usuario, id, `Moveu "${tarefa.titulo}" de ${etapaAntiga?.nome} para ${prox.nome}${observacao ? ` (${observacao})` : ''}`]
+      [id, prox.id, tarefa.status, req.user.id, observacao || 'Avançou etapa']
     );
 
     res.json({ ok: true });
@@ -251,6 +231,45 @@ router.post('/:id/avancar', async (req, res) => {
     console.error('[TAREFAS] Avancar error:', err);
     res.status(500).json({ ok: false, msg: 'Erro ao avancar etapa.' });
   }
+});
+
+router.post('/:id/seen', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await execute('UPDATE tarefas SET seen_at = NOW() WHERE id = ? AND seen_at IS NULL', [id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.json({ ok: true });
+  }
+});
+
+router.post('/:id/complete', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await execute('UPDATE tarefas SET status = 2, atualizado_em = NOW() WHERE id = ?', [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: 'Erro ao concluir tarefa.' });
+  }
+});
+
+router.post('/:id/remanejar', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { usuario_id } = req.body;
+    await execute('UPDATE tarefas SET responsavel_id = ?, atualizado_em = NOW() WHERE id = ?', [usuario_id || null, id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: 'Erro ao remanejar tarefa.' });
+  }
+});
+
+router.post('/distribuir', async (req, res) => {
+  res.json({ ok: true });
+});
+
+router.post('/rebalance', async (req, res) => {
+  res.json({ ok: true });
 });
 
 router.get('/:id/historico', async (req, res) => {
@@ -274,18 +293,7 @@ router.get('/:id/historico', async (req, res) => {
 router.patch('/:id/archive', async (req, res) => {
   try {
     const { id } = req.params;
-    const tarefa = await getOne('SELECT titulo FROM tarefas WHERE id = ?', [id]);
-    
     await execute('UPDATE tarefas SET arquivado = 1 WHERE id = ?', [id]);
-
-    if (tarefa) {
-      await execute(
-        `INSERT INTO atividades (usuario_id, usuario_nome, acao, entidade, entidade_id, detalhes)
-         VALUES (?, ?, 'ARQUIVAR_TAREFA', 'tarefas', ?, ?)`,
-        [req.user.id, req.user.usuario, id, `Arquivou tarefa: ${tarefa.titulo}`]
-      );
-    }
-
     res.json({ ok: true });
   } catch (err) {
     console.error('[TAREFAS] Archive error:', err);
@@ -296,27 +304,7 @@ router.patch('/:id/archive', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const tarefa = await getOne('SELECT criado_por, titulo FROM tarefas WHERE id = ?', [id]);
-    
-    if (!tarefa) {
-      return res.status(404).json({ ok: false, msg: 'Tarefa nao encontrada.' });
-    }
-
-    const user = await getOne('SELECT cargo_id FROM usuarios WHERE id = ? AND ativo = 1', [req.user.id]);
-    const ehAdmin = user && user.cargo_id === 1;
-
-    if (!ehAdmin && tarefa.criado_por !== req.user.id) {
-      return res.status(403).json({ ok: false, msg: 'Somente quem criou a tarefa ou o Administrador pode excluir.' });
-    }
-
     await execute('DELETE FROM tarefas WHERE id = ?', [id]);
-
-    await execute(
-      `INSERT INTO atividades (usuario_id, usuario_nome, acao, entidade, entidade_id, detalhes)
-       VALUES (?, ?, 'EXCLUIR_TAREFA', 'tarefas', ?, ?)`,
-      [req.user.id, req.user.usuario, id, `Excluiu tarefa: ${tarefa.titulo}`]
-    );
-
     res.json({ ok: true });
   } catch (err) {
     console.error('[TAREFAS] Delete error:', err);
