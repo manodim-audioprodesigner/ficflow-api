@@ -15,7 +15,6 @@ router.get('/', async (req, res) => {
        ORDER BY u.nome`
     );
 
-    // Formata o campo teams se for JSON string
     const formatted = users.map(u => {
       let teamsArr = [];
       try {
@@ -82,7 +81,6 @@ router.put('/:id', async (req, res) => {
     const cur = await getOne('SELECT * FROM usuarios WHERE id = ?', [id]);
     if (!cur) return res.status(404).json({ ok: false, msg: 'Usuário não encontrado.' });
 
-    // Apenas troca de senha
     if (pin && pin.trim() && !nome) {
       await execute('UPDATE usuarios SET pin_hash = ? WHERE id = ?', [hashPin(pin), id]);
       return res.json({ ok: true });
@@ -135,9 +133,12 @@ router.delete('/:id', async (req, res) => {
     await execute('UPDATE tarefas SET responsavel_id = NULL WHERE responsavel_id = ?', [id]);
     await execute('UPDATE tarefas SET criado_por = NULL WHERE criado_por = ?', [id]);
     await execute('UPDATE programas SET criado_por = NULL WHERE criado_por = ?', [id]);
-    await execute('UPDATE status_historico SET usuario_id = NULL WHERE usuario_id = ?', [id]);
-    await execute('UPDATE chat_mensagens SET usuario_id = NULL WHERE usuario_id = ?', [id]);
-    await execute('UPDATE chat_mensagens SET destinatario_id = NULL WHERE destinatario_id = ?', [id]);
+    try {
+      await execute('UPDATE status_historico SET usuario_id = NULL WHERE usuario_id = ?', [id]);
+    } catch (e) {
+      await execute('DELETE FROM status_historico WHERE usuario_id = ?', [id]);
+    }
+    await execute('DELETE FROM chat_mensagens WHERE usuario_id = ? OR destinatario_id = ?', [id, id]);
     await execute('DELETE FROM notificacoes WHERE usuario_id = ?', [id]);
     await execute('DELETE FROM atividades WHERE usuario_id = ?', [id]);
     
@@ -147,28 +148,6 @@ router.delete('/:id', async (req, res) => {
   } catch (err) {
     console.error('[USERS] Delete error:', err);
     res.status(500).json({ ok: false, msg: 'Erro ao excluir usuário: ' + (err.message || '') });
-  }
-});
-
-router.get('/fix-fks/run', async (req, res) => {
-  try {
-    const q = `SELECT tc.table_name, tc.constraint_name, kcu.column_name 
-               FROM information_schema.table_constraints AS tc 
-               JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name 
-               JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name 
-               WHERE constraint_type = 'FOREIGN KEY' AND ccu.table_name = 'usuarios'`;
-    const rows = await query(q);
-    const fixes = [];
-    for (let row of rows) {
-      if (row.constraint_name.includes('ON DELETE')) continue;
-      await execute(`ALTER TABLE ${row.table_name} DROP CONSTRAINT ${row.constraint_name}`);
-      const act = row.table_name === 'notificacoes' ? 'CASCADE' : 'SET NULL';
-      await execute(`ALTER TABLE ${row.table_name} ADD CONSTRAINT ${row.constraint_name} FOREIGN KEY (${row.column_name}) REFERENCES usuarios(id) ON DELETE ${act}`);
-      fixes.push(row.table_name + '.' + row.column_name);
-    }
-    res.json({ ok: true, msg: 'Fix completed', fixes });
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
   }
 });
 
