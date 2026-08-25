@@ -165,7 +165,10 @@ router.post('/', async (req, res) => {
 // Atualizar programa (nome, codigo, prioridade, status, root)
 router.put('/:id', async (req, res) => {
   try {
-    const { id } = req.params;
+    const rawId = req.params.id;
+    const id = (rawId && rawId !== '[object Object]' && !isNaN(rawId)) ? parseInt(rawId) : (req.body.id ? parseInt(req.body.id) : null);
+    if (!id) return res.status(400).json({ ok: false, msg: 'ID do programa inválido.' });
+
     const { nome, codigo, prioridade, status, root } = req.body;
 
     const cur = await getOne('SELECT * FROM programas WHERE id = ?', [id]);
