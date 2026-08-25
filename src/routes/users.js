@@ -146,7 +146,7 @@ router.delete('/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[USERS] Delete error:', err);
-    res.status(500).json({ ok: false, msg: 'Erro ao excluir usuário.' });
+    res.status(500).json({ ok: false, msg: 'Erro ao excluir usuário: ' + (err.message || '') });
   }
 });
 
