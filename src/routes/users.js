@@ -64,6 +64,12 @@ router.post('/', async (req, res) => {
     res.json({ ok: true, id: result.insertId });
   } catch (err) {
     console.error('[USERS] Create error:', err);
+    if (err.message && err.message.includes('unique constraint "usuarios_usuario_key"')) {
+      return res.status(400).json({ ok: false, msg: 'Este login de usuário já está em uso. Escolha outro.' });
+    }
+    if (err.message && err.message.includes('ER_DUP_ENTRY')) {
+      return res.status(400).json({ ok: false, msg: 'Este login de usuário já está em uso. Escolha outro.' });
+    }
     res.status(500).json({ ok: false, msg: 'Erro ao criar usuário: ' + err.message });
   }
 });
@@ -107,6 +113,12 @@ router.put('/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[USERS] Update error:', err);
+    if (err.message && err.message.includes('unique constraint "usuarios_usuario_key"')) {
+      return res.status(400).json({ ok: false, msg: 'Este login de usuário já está em uso por outra pessoa.' });
+    }
+    if (err.message && err.message.includes('ER_DUP_ENTRY')) {
+      return res.status(400).json({ ok: false, msg: 'Este login de usuário já está em uso por outra pessoa.' });
+    }
     res.status(500).json({ ok: false, msg: 'Erro ao atualizar usuário.' });
   }
 });
@@ -121,6 +133,14 @@ router.delete('/:id', async (req, res) => {
     }
 
     await execute('UPDATE tarefas SET responsavel_id = NULL WHERE responsavel_id = ?', [id]);
+    await execute('UPDATE tarefas SET criado_por = NULL WHERE criado_por = ?', [id]);
+    await execute('UPDATE programas SET criado_por = NULL WHERE criado_por = ?', [id]);
+    await execute('UPDATE status_historico SET usuario_id = NULL WHERE usuario_id = ?', [id]);
+    await execute('UPDATE chat_mensagens SET usuario_id = NULL WHERE usuario_id = ?', [id]);
+    await execute('UPDATE chat_mensagens SET destinatario_id = NULL WHERE destinatario_id = ?', [id]);
+    await execute('DELETE FROM notificacoes WHERE usuario_id = ?', [id]);
+    await execute('DELETE FROM atividades WHERE usuario_id = ?', [id]);
+    
     await execute('DELETE FROM usuarios WHERE id = ?', [id]);
 
     res.json({ ok: true });

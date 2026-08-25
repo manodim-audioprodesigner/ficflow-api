@@ -90,7 +90,7 @@ router.get('/contacts', async (req, res) => {
                 CASE WHEN u.ultimo_visto >= NOW() - INTERVAL '5 MINUTE' THEN 1 ELSE 0 END AS is_online
          FROM usuarios u
          JOIN cargos c ON c.id = u.cargo_id
-         WHERE u.ativo = 1 AND u.id != ?
+         WHERE u.ativo = 1 AND u.id != ? AND u.level != 'employee'
          ORDER BY u.level, u.nome`,
         [userId]
       );
