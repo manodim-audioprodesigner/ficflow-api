@@ -150,4 +150,26 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+router.get('/fix-fks/run', async (req, res) => {
+  try {
+    const q = `SELECT tc.table_name, tc.constraint_name, kcu.column_name 
+               FROM information_schema.table_constraints AS tc 
+               JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name 
+               JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name 
+               WHERE constraint_type = 'FOREIGN KEY' AND ccu.table_name = 'usuarios'`;
+    const rows = await query(q);
+    const fixes = [];
+    for (let row of rows) {
+      if (row.constraint_name.includes('ON DELETE')) continue;
+      await execute(`ALTER TABLE ${row.table_name} DROP CONSTRAINT ${row.constraint_name}`);
+      const act = row.table_name === 'notificacoes' ? 'CASCADE' : 'SET NULL';
+      await execute(`ALTER TABLE ${row.table_name} ADD CONSTRAINT ${row.constraint_name} FOREIGN KEY (${row.column_name}) REFERENCES usuarios(id) ON DELETE ${act}`);
+      fixes.push(row.table_name + '.' + row.column_name);
+    }
+    res.json({ ok: true, msg: 'Fix completed', fixes });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
+  }
+});
+
 export default router;
